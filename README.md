@@ -38,7 +38,11 @@ sent to the model); the state follows the session tree and is restored on resume
 
 ## Settings
 
-`~/.pi/agent/auto-effort.json`, with `<project>/.pi/auto-effort.json` merged on top:
+`~/.config/agents/auto-effort.json` (`$XDG_CONFIG_HOME` honored) and `<project>/.agents/auto-effort.json`
+are shared with the opencode and Claude Code ports of this plugin; `~/.pi/agent/auto-effort.json` and
+`<project>/.pi/auto-effort.json` are pi-only overrides. They are read in the order shared user, pi
+user, shared project, pi project, each merged on top of the last (objects merge, other values
+replace); keys a port does not know are ignored.
 
 ```json
 {
