@@ -69,12 +69,14 @@ export function decide(current: string, state: EffortState, judgment: Judgment |
   const s = judgment.score;
   // A go-ahead's own score says nothing about the work it approves, so it leaves the average alone.
   if (judgment.ack > policy.ackThreshold) return { level: current, state: { ...state, dwell: state.dwell + 1 }, reason: "ack" };
-  const e = state.e === undefined ? s : policy.alpha * s + (1 - policy.alpha) * state.e;
+  let e = state.e === undefined ? s : policy.alpha * s + (1 - policy.alpha) * state.e;
   let target = c;
   let reason: Decision["reason"] = "hold";
   if (s - c >= policy.jump && judgment.confidence >= policy.jumpConfidence) {
     target = Math.round(s);
     reason = "jump";
+    // Lift the average with the jump so it does not pull the level straight back down.
+    e = Math.max(e, s);
   } else if (e - c >= policy.margin) {
     target = Math.round(e);
     reason = "up";

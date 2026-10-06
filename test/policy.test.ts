@@ -20,7 +20,14 @@ describe("decide", () => {
 
   test("a confident hard message jumps straight up", () => {
     const d = decide("low", { e: 0, dwell: 0, ceiling: "xhigh" }, j(3, 0.8), DEFAULT_POLICY);
-    expect(d).toMatchObject({ level: "xhigh", reason: "jump" });
+    expect(d).toMatchObject({ level: "xhigh", reason: "jump", state: { e: 3 } });
+  });
+
+  test("a jump is not undone by the stale average", () => {
+    const jumped = decide("low", { e: 0, dwell: 5, ceiling: "xhigh" }, j(3, 0.8), DEFAULT_POLICY);
+    const d = decide(jumped.level, { ...jumped.state, dwell: 5 }, j(2.5), DEFAULT_POLICY);
+    expect(d).toMatchObject({ level: "xhigh", reason: "hold" });
+    expect(d.state.e).toBeCloseTo(2.75);
   });
 
   test("an unsure hard message moves up through the average", () => {
