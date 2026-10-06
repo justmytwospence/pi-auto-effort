@@ -36,7 +36,14 @@ describe("decide", () => {
 
   test("a go-ahead keeps the level", () => {
     const d = decide("high", { e: 2, dwell: 5, ceiling: "xhigh" }, j(0, 0.9, 0.95), DEFAULT_POLICY);
-    expect(d).toMatchObject({ level: "high", reason: "ack" });
+    expect(d).toMatchObject({ level: "high", reason: "ack", state: { e: 2, dwell: 6 } });
+  });
+
+  test("a go-ahead does not drag the average down for the next message", () => {
+    const ack = decide("high", { e: 2, dwell: 5, ceiling: "xhigh" }, j(0, 0.9, 0.95), DEFAULT_POLICY);
+    const next = decide("high", ack.state, j(1.5), DEFAULT_POLICY);
+    expect(next).toMatchObject({ level: "high", reason: "hold" });
+    expect(next.state.e).toBeCloseTo(1.75);
   });
 
   test("the manual level is the ceiling and low the floor", () => {

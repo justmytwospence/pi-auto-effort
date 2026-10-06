@@ -67,11 +67,12 @@ export function decide(current: string, state: EffortState, judgment: Judgment |
   if (c < 0 || ceiling < 0 || ceiling < floor) return { level: current, state: { ...state, dwell: state.dwell + 1 }, reason: "hold" };
   if (!judgment) return { level: current, state: { ...state, dwell: state.dwell + 1 }, reason: "unavailable" };
   const s = judgment.score;
+  // A go-ahead's own score says nothing about the work it approves, so it leaves the average alone.
+  if (judgment.ack > policy.ackThreshold) return { level: current, state: { ...state, dwell: state.dwell + 1 }, reason: "ack" };
   const e = state.e === undefined ? s : policy.alpha * s + (1 - policy.alpha) * state.e;
   let target = c;
   let reason: Decision["reason"] = "hold";
-  if (judgment.ack > policy.ackThreshold) reason = "ack";
-  else if (s - c >= policy.jump && judgment.confidence >= policy.jumpConfidence) {
+  if (s - c >= policy.jump && judgment.confidence >= policy.jumpConfidence) {
     target = Math.round(s);
     reason = "jump";
   } else if (e - c >= policy.margin) {
@@ -83,6 +84,6 @@ export function decide(current: string, state: EffortState, judgment: Judgment |
   }
   target = Math.min(Math.max(target, floor), ceiling);
   const level = LEVELS[target] as string;
-  if (target === c) return { level: current, state: { ...state, e, dwell: state.dwell + 1 }, reason: reason === "ack" ? "ack" : "hold" };
+  if (target === c) return { level: current, state: { ...state, e, dwell: state.dwell + 1 }, reason: "hold" };
   return { level, state: { ...state, e, dwell: 0 }, reason };
 }
