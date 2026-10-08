@@ -66,6 +66,24 @@ test("state is restored from the branch", async () => {
   expect(h.thinking).toBe("xhigh");
 });
 
+test("an entry from before the limits stage restores its level as the baseline; a manual change replaces it", async () => {
+  const h = harness();
+  autoEffort(h.pi);
+  const jev = fakeJev(() => answers(1.4));
+  const ctx = h.ctx({
+    modelRegistry: jev.registry,
+    sessionManager: { getBranch: () => [{ type: "custom", customType: "auto-effort:state", data: { e: 1, dwell: 5, ceiling: "xhigh", level: "medium" } }] },
+  });
+  h.pi.setThinkingLevel("medium");
+  await h.emit("session_start", { type: "session_start" }, ctx);
+  await h.emit("before_agent_start", { prompt: "routine" }, ctx);
+  expect(h.entries.at(-1)?.data).toMatchObject({ baseline: "medium", level: "medium", reason: "hold" });
+  // You pick high: it is the new ceiling and the policy's starting point.
+  h.pi.setThinkingLevel("high");
+  await h.emit("before_agent_start", { prompt: "routine" }, ctx);
+  expect(h.entries.at(-1)?.data).toMatchObject({ from: "high", ceiling: "high", reason: "down", baseline: "medium" });
+});
+
 test("effortState describes the request and the previous run", () => {
   const entries = [
     userEntry("Add caching"),

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { DEFAULT_POLICY, type EffortState, decide } from "../src/policy.ts";
+import { applyLimit } from "../src/limits.ts";
+import { DEFAULT_POLICY, type EffortState, LEVELS, decide } from "../src/policy.ts";
 
 const fresh = (ceiling = "xhigh"): EffortState => ({ dwell: DEFAULT_POLICY.minDwell, ceiling });
 const j = (score: number, confidence = 0.9, ack = 0) => ({ score, confidence, ack });
@@ -62,5 +63,20 @@ describe("decide", () => {
     expect(decide("off", fresh("off"), j(3), DEFAULT_POLICY).level).toBe("off");
     expect(decide("minimal", fresh("minimal"), j(3), DEFAULT_POLICY).level).toBe("minimal");
     expect(decide("high", fresh(), undefined, DEFAULT_POLICY)).toMatchObject({ level: "high", reason: "unavailable" });
+  });
+
+  test("a limit on top never ratchets the policy's own level down, and lifting it restores that level", () => {
+    let baseline = "high";
+    let state: EffortState = { e: 2, dwell: 5, ceiling: "xhigh" };
+    for (let i = 0; i < 5; i++) {
+      const d = decide(baseline, state, j(2), DEFAULT_POLICY);
+      state = d.state;
+      baseline = d.level;
+      expect(applyLimit(baseline, { steps: 2 }, DEFAULT_POLICY.floor, LEVELS).level).toBe("low");
+    }
+    expect(baseline).toBe("high");
+    expect(state.e).toBeCloseTo(2);
+    expect(state.dwell).toBe(10);
+    expect(applyLimit(baseline, { steps: 0 }, DEFAULT_POLICY.floor, LEVELS).level).toBe("high");
   });
 });
