@@ -1,7 +1,7 @@
 # pi-auto-effort
 
-A [pi](https://pi.dev) extension that sets the thinking level for each message you send, on the
-model you chose. [Jev](https://docs.typesafe.ai), called through Pi's own classifier models
+A [pi](https://pi.dev) extension that sets the thinking level for each message you send, and
+between tool turns of a long run where the model allows it, on the model you chose. [Jev](https://docs.typesafe.ai), called through Pi's own classifier models
 (`ctx.modelRegistry.classify`), rates how much careful reasoning the request needs, in about 100-250
 ms before the turn starts:
 
@@ -16,17 +16,29 @@ Jev sees the request, the two before it, the last answer, and what the last run 
 edited, tool calls).
 
 **Smoothing.** A running average `e = 0.5·score + 0.5·e_prev` moves the level up when it is at least
-0.6 above it, and down when at least 0.6 below and the level has held for 2 messages. A confident
-(>= 0.6) score 1.5 or more above the level jumps straight to it. A go-ahead ("yes", "continue", "do
-it") keeps the level.
+0.6 above it, and down when at least 0.6 below and the level has held for 2 assessments. A
+confident (>= 0.6) score 1.5 or more above the level jumps straight to it. A go-ahead ("yes",
+"continue", "do it") keeps the level.
 
 **Bounds.** Your latest manual level (`/thinking`, the shortcut, a model switch, or another
 extension such as plan mode) is the ceiling; `low` is the floor. Levels below the floor (`off`,
 `minimal`) are left alone.
 
-**Cache-safe.** The level changes only before a message you send, never on tool follow-ups.
-Auto-effort is off when Pi was started with `--thinking` (so a subagent's explicit effort stays
-fixed), and it keeps the level when Jev is unavailable.
+**Mid-run.** A long run can change what it needs: mechanical edits after a hard design step, or
+a debugging stretch in the middle of a routine change. On models that take an effort change
+mid-conversation without losing the prompt cache (Pi's `compat.supportsMidConvoEffort`: Claude
+Opus 5, Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1), Jev re-rates the work between tool turns:
+every 3 tool turns, or at once after a turn with a failed tool call. It sees the request that started the
+run, the agent's last 6 steps (what it said, the tools it called, what failed) and counts for the
+run so far, and the same average, dwell, ceiling, floor and limits apply (dwell counts these
+assessments too). The check runs after the tools finish and before the next request, adding one
+Jev call (~100-250 ms) every few turns.
+
+**Cache-safe.** On every other model the level changes only before a message you send, never on
+tool follow-ups, since changing the thinking settings there invalidates the cached conversation.
+`midRun.models` adds models by `provider/id` glob if you accept that cost. Auto-effort is off when
+Pi was started with `--thinking` (so a subagent's explicit effort stays fixed), and it keeps the
+level when Jev is unavailable.
 
 ## Commands
 
@@ -37,7 +49,7 @@ fixed), and it keeps the level when Jev is unavailable.
 
 The footer shows `effort: high (auto)`, or `effort: medium (auto, limited: 5h 84%)` while a limit
 is in force (see Limits). Each decision is an `auto-effort:state` session entry (never
-sent to the model); the state follows the session tree and is restored on resume.
+sent to the model; `phase` is `prompt` or `run`); the state follows the session tree and is restored on resume.
 
 ## Limits
 
@@ -116,9 +128,14 @@ replace); keys a port does not know are ignored.
 {
   "enabled": true,
   "jev": { "enabled": true, "provider": "typesafe", "model": "jev-latest", "timeoutMs": 1500 },
-  "policy": { "floor": "low", "alpha": 0.5, "margin": 0.6, "jump": 1.5, "jumpConfidence": 0.6, "minDwell": 2, "ackThreshold": 0.7 }
+  "policy": { "floor": "low", "alpha": 0.5, "margin": 0.6, "jump": 1.5, "jumpConfidence": 0.6, "minDwell": 2, "ackThreshold": 0.7 },
+  "midRun": { "enabled": true, "everyTurns": 3, "errorTurns": 1, "steps": 6, "models": [] }
 }
 ```
+
+`midRun.errorTurns` is how many failed tool calls in one turn trigger an early check (0 = never);
+`midRun.models` lists extra `provider/id` globs (`*` matches anything) to re-assess mid-run beyond
+the managed-effort models.
 
 Requires Pi 0.99 or newer for classifier models.
 
@@ -126,5 +143,5 @@ Requires Pi 0.99 or newer for classifier models.
 
 ```sh
 npm run check   # typecheck and unit tests
-npm run eval    # 20 requests against live Jev through the installed Pi (needs TYPESAFE_API_KEY)
+npm run eval    # 20 requests and 4 mid-run stretches against live Jev through the installed Pi (needs TYPESAFE_API_KEY)
 ```

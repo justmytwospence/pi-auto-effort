@@ -13,7 +13,7 @@ export interface Policy {
   jump: number;
   /** ...when Jev is at least this confident. */
   jumpConfidence: number;
-  /** Messages a level must hold before it can go down. */
+  /** Assessments (messages, and mid-run checks) a level must hold before it can go down. */
   minDwell: number;
   /** A go-ahead message ("yes", "continue") above this probability keeps the level. */
   ackThreshold: number;
@@ -32,7 +32,7 @@ export const DEFAULT_POLICY: Policy = {
 export interface EffortState {
   /** Running average of depth scores; undefined before the first judgment. */
   e?: number;
-  /** Messages since the level last changed. */
+  /** Assessments since the level last changed. */
   dwell: number;
   /** The highest level auto-effort may set: your latest manual choice. */
   ceiling: string;

@@ -1,14 +1,14 @@
-// pi-auto-effort: sets the thinking level once per message you send. Jev, through Pi's own
+// pi-auto-effort: sets the thinking level for each message you send. Jev, through Pi's own
 // classifier models, rates how demanding the request is (0-3); a running average with a margin,
 // a jump rule for clearly harder work, and a minimum dwell before going down keep the level from
-// flip-flopping. Your latest manual level is the ceiling. The level never changes during a run
-// (tool follow-ups), so prompt caches survive. When a subscription window (Anthropic 5h/7d,
-// Codex primary/secondary) is on track to run out before it resets, the level goes one or two
-// below the one the policy picked (limits.ts); the policy's own baseline is kept apart, so the
-// cut never feeds back into it.
+// flip-flopping. Your latest manual level is the ceiling. During a run (tool follow-ups) the level
+// is re-assessed only on models that keep their prompt cache across an effort change
+// (midrun.ts). When a subscription window (Anthropic 5h/7d, Codex primary/secondary) is on track
+// to run out before it resets, the level goes one or two below the one the policy picked
+// (limits.ts); the policy's own baseline is kept apart, so the cut never feeds back into it.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config.ts";
-import { type ClassifierQuestion, type JevConfig, askJev, bool, score } from "./jev.ts";
+import { type ClassifierQuestion, type JevConfig, type JevOutcome, askJev, bool, score } from "./jev.ts";
 import {
   DEFAULT_LIMITS,
   type LimitsPolicy,
@@ -22,7 +22,8 @@ import {
   readAnthropicHeaders,
   readCodexHeaders,
 } from "./limits.ts";
-import { DEFAULT_POLICY, type EffortState, LEVELS, type Policy, decide } from "./policy.ts";
+import { DEFAULT_MID_RUN, MID_RUN_QUESTIONS, type MidRunConfig, midRunSupported, runState, shouldAssess } from "./midrun.ts";
+import { DEFAULT_POLICY, type EffortState, type Judgment, LEVELS, type Policy, decide } from "./policy.ts";
 import { clip, messageText } from "./transcript.ts";
 import { CodexPoller } from "./usage.ts";
 
@@ -31,6 +32,7 @@ export interface EffortConfig extends Record<string, unknown> {
   jev: JevConfig;
   policy: Policy;
   limits: LimitsPolicy;
+  midRun: MidRunConfig;
 }
 
 export const DEFAULT_CONFIG: EffortConfig = {
@@ -38,7 +40,21 @@ export const DEFAULT_CONFIG: EffortConfig = {
   jev: { enabled: true, provider: "typesafe", model: "jev-latest", timeoutMs: 1_500 },
   policy: DEFAULT_POLICY,
   limits: DEFAULT_LIMITS,
+  midRun: DEFAULT_MID_RUN,
 };
+
+/** Mid-run settings with invalid values replaced by their defaults. */
+export function midRunConfig(value: unknown): MidRunConfig {
+  const v = (value && typeof value === "object" ? value : {}) as Partial<Record<keyof MidRunConfig, unknown>>;
+  const count = (x: unknown, d: number) => (typeof x === "number" && Number.isInteger(x) && x >= 0 ? x : d);
+  return {
+    enabled: typeof v.enabled === "boolean" ? v.enabled : DEFAULT_MID_RUN.enabled,
+    everyTurns: Math.max(1, count(v.everyTurns, DEFAULT_MID_RUN.everyTurns)),
+    errorTurns: count(v.errorTurns, DEFAULT_MID_RUN.errorTurns),
+    steps: Math.max(1, count(v.steps, DEFAULT_MID_RUN.steps)),
+    models: Array.isArray(v.models) ? v.models.filter((m): m is string => typeof m === "string") : DEFAULT_MID_RUN.models,
+  };
+}
 
 /** For tests: the clock and fetch the limits stage uses. */
 export interface AutoEffortDeps {
@@ -154,6 +170,8 @@ export default function autoEffort(pi: ExtensionAPI, deps: AutoEffortDeps = {}) 
   let ownLevel: string | undefined;
   let firedWhileApplying = false;
   let lastReason = "";
+  // Tool turns since the last assessment in this run.
+  let turnsSince = 0;
   const pinned = thinkingPinned();
 
   const active = () => sessionOn && config.enabled && !pinned;
@@ -224,16 +242,13 @@ export default function autoEffort(pi: ExtensionAPI, deps: AutoEffortDeps = {}) 
     if (ctx) status(ctx);
   });
 
-  pi.on("before_agent_start", async (event, ctx) => {
-    config = loadConfig("auto-effort", DEFAULT_CONFIG, ctx.cwd);
-    if (!active() || !event.prompt.trim()) return;
+  /**
+   * Applies a judgment: the policy picks a level from its own last pick, the limits stage may cut
+   * it, and the decision is recorded. `phase` is "prompt" before a message you send, "run" between
+   * tool turns.
+   */
+  const settle = (ctx: ExtensionContext, outcome: JevOutcome, judgment: Judgment | undefined, extra: Record<string, unknown>) => {
     const current = pi.getThinkingLevel();
-    // Codex usage refreshes alongside the Jev call; the prompt never waits for it.
-    pollCodex(ctx);
-    const outcome = await askJev(ctx.modelRegistry, config.jev, effortState(event.prompt, ctx.sessionManager.getBranch()), QUESTIONS, ctx.signal);
-    const depth = outcome.ok ? score(outcome.answers, "depth") : undefined;
-    const ack = outcome.ok ? bool(outcome.answers, "ack") : undefined;
-    const judgment = depth && ack !== undefined ? { score: depth.score, confidence: depth.confidence, ack } : undefined;
     // The policy works from its own last pick; a level someone else set since replaces it.
     const base = baseline !== undefined && appliedLevel !== undefined && current === appliedLevel ? baseline : current;
     const decision = decide(base, state, judgment, config.policy);
@@ -264,6 +279,7 @@ export default function autoEffort(pi: ExtensionAPI, deps: AutoEffortDeps = {}) 
     appliedLevel = pi.getThinkingLevel();
     pi.appendEntry(STATE_ENTRY, {
       ...state,
+      ...extra,
       baseline,
       from: current,
       level: appliedLevel,
@@ -275,6 +291,40 @@ export default function autoEffort(pi: ExtensionAPI, deps: AutoEffortDeps = {}) 
       ...(outcome.ok ? { latencyMs: outcome.latencyMs, inputTokens: outcome.usage?.input } : {}),
     });
     status(ctx);
+  };
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    config = loadConfig("auto-effort", DEFAULT_CONFIG, ctx.cwd);
+    turnsSince = 0;
+    if (!active() || !event.prompt.trim()) return;
+    // Codex usage refreshes alongside the Jev call; the prompt never waits for it.
+    pollCodex(ctx);
+    const outcome = await askJev(ctx.modelRegistry, config.jev, effortState(event.prompt, ctx.sessionManager.getBranch()), QUESTIONS, ctx.signal);
+    const depth = outcome.ok ? score(outcome.answers, "depth") : undefined;
+    const ack = outcome.ok ? bool(outcome.answers, "ack") : undefined;
+    const judgment = depth && ack !== undefined ? { score: depth.score, confidence: depth.confidence, ack } : undefined;
+    settle(ctx, outcome, judgment, { phase: "prompt" });
+  });
+
+  // Between tool turns, on models that take an effort change mid-conversation without losing the
+  // cache: the handler is awaited before the next request, which picks up the new level.
+  pi.on("turn_end", async (event, ctx) => {
+    if (!active()) return;
+    const mid = midRunConfig(config.midRun);
+    if (!mid.enabled || !midRunSupported(ctx.model, mid.models)) return;
+    const results = (event.toolResults ?? []) as Array<{ isError?: boolean }>;
+    const stop = (event.message as { stopReason?: string } | undefined)?.stopReason;
+    // A turn without tool results ends the run; an error or abort has no next request to change.
+    if (!results.length || stop === "error" || stop === "aborted" || ctx.signal?.aborted) return;
+    turnsSince++;
+    if (!shouldAssess(mid, turnsSince, results.filter((r) => r.isError).length)) return;
+    turnsSince = 0;
+    const outcome = await askJev(ctx.modelRegistry, config.jev, runState(ctx.sessionManager.getBranch(), mid.steps), MID_RUN_QUESTIONS, ctx.signal);
+    if (ctx.signal?.aborted) return;
+    const depth = outcome.ok ? score(outcome.answers, "depth") : undefined;
+    // Mid-run there is no message to be a go-ahead.
+    const judgment = depth ? { score: depth.score, confidence: depth.confidence, ack: 0 } : undefined;
+    settle(ctx, outcome, judgment, { phase: "run", turn: event.turnIndex });
   });
 
   pi.registerCommand("auto-effort", {
@@ -304,7 +354,7 @@ export default function autoEffort(pi: ExtensionAPI, deps: AutoEffortDeps = {}) 
       ctx.ui.notify(
         [
           `auto-effort ${active() ? "on" : pinned ? "off (--thinking was given)" : "off"}: ${pi.getThinkingLevel()} now, ceiling ${state.ceiling} (your last manual level), floor ${config.policy.floor}.`,
-          `Running average ${state.e === undefined ? "-" : state.e.toFixed(2)}, ${state.dwell} message${state.dwell === 1 ? "" : "s"} at this level${lastReason ? `, last decision: ${lastReason}` : ""}.`,
+          `Running average ${state.e === undefined ? "-" : state.e.toFixed(2)}, ${state.dwell} assessment${state.dwell === 1 ? "" : "s"} at this level${lastReason ? `, last decision: ${lastReason}` : ""}.`,
           ...(baseline !== undefined && baseline !== appliedLevel ? [`Without the limit: ${baseline}.`] : []),
           ...limitLines(ctx),
         ].join("\n"),
