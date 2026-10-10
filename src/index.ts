@@ -3,9 +3,10 @@
 // a jump rule for clearly harder work, and a minimum dwell before going down keep the level from
 // flip-flopping. Your latest manual level is the ceiling. During a run (tool follow-ups) the level
 // is re-assessed only on models that keep their prompt cache across an effort change
-// (midrun.ts). When a subscription window (Anthropic 5h/7d, Codex primary/secondary) is on track
-// to run out before it resets, the level goes one or two below the one the policy picked
-// (limits.ts); the policy's own baseline is kept apart, so the cut never feeds back into it.
+// (midrun.ts); on Codex GPT-6 models that means configuration_update items (effort-updates.ts).
+// When a subscription window (Anthropic 5h/7d, Codex primary/secondary) is on track to run out
+// before it resets, the level goes one or two below the one the policy picked (limits.ts); the
+// policy's own baseline is kept apart, so the cut never feeds back into it.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config.ts";
 import { type ClassifierQuestion, type JevConfig, type JevOutcome, askJev, bool, score } from "./jev.ts";
@@ -22,7 +23,8 @@ import {
   readAnthropicHeaders,
   readCodexHeaders,
 } from "./limits.ts";
-import { DEFAULT_MID_RUN, MID_RUN_QUESTIONS, type MidRunConfig, midRunSupported, runState, shouldAssess } from "./midrun.ts";
+import { DEFAULT_EFFORT_UPDATES, type EffortUpdatesConfig, emptyState, restoreState, rewritePayload } from "./effort-updates.ts";
+import { DEFAULT_MID_RUN, MID_RUN_QUESTIONS, type MidRunConfig, globMatch, midRunSupported, runState, shouldAssess } from "./midrun.ts";
 import { DEFAULT_POLICY, type EffortState, type Judgment, LEVELS, type Policy, decide } from "./policy.ts";
 import { clip, messageText } from "./transcript.ts";
 import { CodexPoller } from "./usage.ts";
@@ -33,6 +35,7 @@ export interface EffortConfig extends Record<string, unknown> {
   policy: Policy;
   limits: LimitsPolicy;
   midRun: MidRunConfig;
+  effortUpdates: EffortUpdatesConfig;
 }
 
 export const DEFAULT_CONFIG: EffortConfig = {
@@ -41,7 +44,23 @@ export const DEFAULT_CONFIG: EffortConfig = {
   policy: DEFAULT_POLICY,
   limits: DEFAULT_LIMITS,
   midRun: DEFAULT_MID_RUN,
+  effortUpdates: DEFAULT_EFFORT_UPDATES,
 };
+
+/** Effort-update settings with invalid values replaced by their defaults. */
+export function effortUpdatesConfig(value: unknown): EffortUpdatesConfig {
+  const v = (value && typeof value === "object" ? value : {}) as Partial<Record<keyof EffortUpdatesConfig, unknown>>;
+  return {
+    enabled: typeof v.enabled === "boolean" ? v.enabled : DEFAULT_EFFORT_UPDATES.enabled,
+    models: Array.isArray(v.models) ? v.models.filter((m): m is string => typeof m === "string") : DEFAULT_EFFORT_UPDATES.models,
+  };
+}
+
+/** The `provider/id` globs whose effort changes keep the cache through `configuration_update` items. */
+function updateModels(config: EffortConfig): string[] {
+  const updates = effortUpdatesConfig(config.effortUpdates);
+  return updates.enabled ? updates.models : [];
+}
 
 /** Mid-run settings with invalid values replaced by their defaults. */
 export function midRunConfig(value: unknown): MidRunConfig {
@@ -67,6 +86,7 @@ export interface AutoEffortDeps {
 const NO_PRESSURE: Pressure = { tier: "none", steps: 0 };
 
 const STATE_ENTRY = "auto-effort:state";
+const UPDATES_ENTRY = "auto-effort:effort-updates";
 const STATUS_KEY = "auto-effort";
 
 export const QUESTIONS: Record<string, ClassifierQuestion> = {
@@ -172,6 +192,8 @@ export default function autoEffort(pi: ExtensionAPI, deps: AutoEffortDeps = {}) 
   let lastReason = "";
   // Tool turns since the last assessment in this run.
   let turnsSince = 0;
+  // Request-level effort and configuration_update positions for this conversation.
+  let updates = emptyState();
   const pinned = thinkingPinned();
 
   const active = () => sessionOn && config.enabled && !pinned;
@@ -219,8 +241,24 @@ export default function autoEffort(pi: ExtensionAPI, deps: AutoEffortDeps = {}) 
     appliedLevel = data && typeof data.level === "string" ? data.level : undefined;
     baseline = data && typeof data.baseline === "string" ? data.baseline : appliedLevel;
     pressure = NO_PRESSURE;
+    const savedUpdates = [...ctx.sessionManager.getBranch()]
+      .reverse()
+      .find((e) => (e as Entry).type === "custom" && (e as Entry).customType === UPDATES_ENTRY) as Entry | undefined;
+    updates = restoreState(savedUpdates?.data);
     status(ctx);
     pollCodex(ctx);
+  });
+
+  // On models that take configuration_update items, any effort change (auto, manual, or another
+  // extension's) keeps the prompt cache: the request-level effort stays put and the change
+  // becomes an item in the input. Independent of /auto-effort on/off.
+  pi.on("before_provider_request", (event, ctx) => {
+    const model = ctx.model;
+    if (!model || (event.payload as { model?: unknown } | undefined)?.model !== model.id) return undefined;
+    const key = `${model.provider}/${model.id}`;
+    if (!updateModels(config).some((glob) => globMatch(glob, key))) return undefined;
+    if (rewritePayload(updates, event.payload)) pi.appendEntry(UPDATES_ENTRY, { ...updates, transitions: [...updates.transitions] });
+    return event.payload;
   });
 
   pi.on("model_select", (_event, ctx) => pollCodex(ctx));
@@ -311,7 +349,7 @@ export default function autoEffort(pi: ExtensionAPI, deps: AutoEffortDeps = {}) 
   pi.on("turn_end", async (event, ctx) => {
     if (!active()) return;
     const mid = midRunConfig(config.midRun);
-    if (!mid.enabled || !midRunSupported(ctx.model, mid.models)) return;
+    if (!mid.enabled || !midRunSupported(ctx.model, [...mid.models, ...updateModels(config)])) return;
     const results = (event.toolResults ?? []) as Array<{ isError?: boolean }>;
     const stop = (event.message as { stopReason?: string } | undefined)?.stopReason;
     // A turn without tool results ends the run; an error or abort has no next request to change.

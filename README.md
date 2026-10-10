@@ -27,12 +27,28 @@ extension such as plan mode) is the ceiling; `low` is the floor. Levels below th
 **Mid-run.** A long run can change what it needs: mechanical edits after a hard design step, or
 a debugging stretch in the middle of a routine change. On models that take an effort change
 mid-conversation without losing the prompt cache (Pi's `compat.supportsMidConvoEffort`: Claude
-Opus 5, Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1), Jev re-rates the work between tool turns:
+Opus 5, Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1; and, through effort updates below, GPT-6 Astra
+and GPT-6.1 Sol on the Codex subscription), Jev re-rates the work between tool turns:
 every 3 tool turns, or at once after a turn with a failed tool call. It sees the request that started the
 run, the agent's last 6 steps (what it said, the tools it called, what failed) and counts for the
 run so far, and the same average, dwell, ceiling, floor and limits apply (dwell counts these
 assessments too). The check runs after the tools finish and before the next request, adding one
 Jev call (~100-250 ms) every few turns.
+
+**Effort updates (Codex).** OpenAI's GPT-6 Astra and GPT-6.1 Sol take a `configuration_update`
+input item that changes reasoning effort from that point in the conversation, while a change to
+the request's `reasoning.effort` starts a separate prompt cache. On `openai-codex/gpt-6-astra` and
+`openai-codex/gpt-6.1-sol`, auto-effort keeps the request's effort at the conversation's first
+value and turns every later change (its own, `/thinking`, or another extension's) into an item at
+the point it happened (after the latest tool result, or before your new message), replaying each
+in place on later requests. Two items are never adjacent (the API rejects that); a history
+rewritten under an item (compaction, a branch switch) starts a new baseline. The positions are an
+`auto-effort:effort-updates` session entry, so a resumed session keeps its cache. This works
+whether auto-effort is on or off. Checked live on both models: the cache is kept across changes,
+and the item moves effort as the request-level setting does. The `openai` provider with Sign in
+with ChatGPT rejects the item (`subscription_sharing_unsupported_capability`), and Codex does not
+mark GPT-6 Sol or Luna as taking it, so they are not listed; `effortUpdates.models` changes the
+list.
 
 **Cache-safe.** On every other model the level changes only before a message you send, never on
 tool follow-ups, since changing the thinking settings there invalidates the cached conversation.
@@ -129,13 +145,14 @@ replace); keys a port does not know are ignored.
   "enabled": true,
   "jev": { "enabled": true, "provider": "typesafe", "model": "jev-latest", "timeoutMs": 1500 },
   "policy": { "floor": "low", "alpha": 0.5, "margin": 0.6, "jump": 1.5, "jumpConfidence": 0.6, "minDwell": 2, "ackThreshold": 0.7 },
-  "midRun": { "enabled": true, "everyTurns": 3, "errorTurns": 1, "steps": 6, "models": [] }
+  "midRun": { "enabled": true, "everyTurns": 3, "errorTurns": 1, "steps": 6, "models": [] },
+  "effortUpdates": { "enabled": true, "models": ["openai-codex/gpt-6-astra", "openai-codex/gpt-6.1-sol"] }
 }
 ```
 
 `midRun.errorTurns` is how many failed tool calls in one turn trigger an early check (0 = never);
 `midRun.models` lists extra `provider/id` globs (`*` matches anything) to re-assess mid-run beyond
-the managed-effort models.
+the managed-effort models and the effort-update models.
 
 Requires Pi 0.99 or newer for classifier models.
 
