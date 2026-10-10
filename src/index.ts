@@ -208,8 +208,8 @@ export default function autoEffort(pi: ExtensionAPI, deps: AutoEffortDeps = {}) 
     const current = pi.getThinkingLevel();
     const base = baseline !== undefined && appliedLevel !== undefined && current === appliedLevel ? baseline : current;
     const direction = trend(base, state, config.policy);
-    const arrow = direction === "up" ? " ↑" : direction === "down" ? " ↓" : "";
-    ctx.ui.setStatus(STATUS_KEY, active() ? `effort: ${current}${arrow} (auto${limited})` : undefined);
+    const arrow = direction === "up" ? "↑" : direction === "down" ? "↓" : "→";
+    ctx.ui.setStatus(STATUS_KEY, active() ? `effort: ${current} (auto ${arrow}${limited})` : undefined);
   };
 
   const manual = (level: string) => {

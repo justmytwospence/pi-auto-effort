@@ -49,7 +49,7 @@ test("Anthropic headers on a risky pace lower the level after a confirming promp
   await h.emit("before_agent_start", { prompt: "and the tests" }, ctx);
   expect(h.thinking).toBe("low");
   expect(h.entries.at(-1)?.data).toMatchObject({ baseline: "high", level: "low", limit: { tier: "critical", steps: 2, window: "5h" } });
-  expect(ctx.ui.status.get("auto-effort")).toBe("effort: low (auto, limited: 5h 35%)");
+  expect(ctx.ui.status.get("auto-effort")).toBe("effort: low (auto →, limited: 5h 35%)");
   expect(ctx.ui.notes.at(-1)?.message).toMatch(/^auto-effort: 5h window 35% used, projected \d+% at reset .*; effort lowered 2 levels$/);
 
   // A limited stretch does not drag the policy's own level down.
@@ -62,7 +62,7 @@ test("Anthropic headers on a risky pace lower the level after a confirming promp
   await h.emit("after_provider_response", { type: "after_provider_response", status: 200, headers: anthropicHeaders(0.01, 540) }, ctx);
   await h.emit("before_agent_start", { prompt: "next" }, ctx);
   expect(h.thinking).toBe("high");
-  expect(ctx.ui.status.get("auto-effort")).toBe("effort: high (auto)");
+  expect(ctx.ui.status.get("auto-effort")).toBe("effort: high (auto →)");
   expect(ctx.ui.notes.at(-1)?.message).toBe("auto-effort: usage limit lifted; effort back to normal");
   expect(now()).toBe(t0 + 7 * M);
 
@@ -96,7 +96,7 @@ test("Codex usage is polled with Pi's token and account, and caps the level", as
   });
   await h.emit("before_agent_start", { prompt: "hard" }, ctx);
   expect(h.thinking).toBe("medium");
-  expect(ctx.ui.status.get("auto-effort")).toBe("effort: medium (auto, limited: 5h 80%)");
+  expect(ctx.ui.status.get("auto-effort")).toBe("effort: medium (auto →, limited: 5h 80%)");
   // Within 5 minutes no new request.
   await h.emit("agent_settled", { type: "agent_settled" }, ctx);
   expect(calls).toHaveLength(1);

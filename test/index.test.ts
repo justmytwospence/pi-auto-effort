@@ -21,7 +21,7 @@ test("effort follows the requests, capped at the manual level", async () => {
   await h.emit("before_agent_start", { prompt: "redesign the sync engine" }, ctx);
   expect(h.thinking).toBe("high");
   expect(h.entries.at(-1)).toMatchObject({ customType: "auto-effort:state", data: { reason: "jump", ceiling: "high" } });
-  expect(ctx.ui.status.get("auto-effort")).toBe("effort: high (auto)");
+  expect(ctx.ui.status.get("auto-effort")).toBe("effort: high (auto →)");
 });
 
 test("the footer shows where the level is heading", async () => {
@@ -29,12 +29,12 @@ test("the footer shows where the level is heading", async () => {
   await h.emit("session_start", { type: "session_start" }, ctx);
   await h.emit("thinking_level_select", { type: "thinking_level_select", level: "xhigh", previousLevel: "high" }, ctx);
   await h.emit("before_agent_start", { prompt: "routine" }, ctx);
-  expect(ctx.ui.status.get("auto-effort")).toBe("effort: medium (auto)");
+  expect(ctx.ui.status.get("auto-effort")).toBe("effort: medium (auto →)");
   // The average rises to 1.5: not enough to move, enough to point up.
   await h.emit("before_agent_start", { prompt: "a bit harder" }, ctx);
-  expect(ctx.ui.status.get("auto-effort")).toBe("effort: medium ↑ (auto)");
+  expect(ctx.ui.status.get("auto-effort")).toBe("effort: medium (auto ↑)");
   await h.emit("before_agent_start", { prompt: "hard" }, ctx);
-  expect(ctx.ui.status.get("auto-effort")).toBe("effort: xhigh (auto)");
+  expect(ctx.ui.status.get("auto-effort")).toBe("effort: xhigh (auto →)");
 });
 
 test("a manual change becomes the new ceiling; own changes do not", async () => {
