@@ -89,3 +89,18 @@ export function decide(current: string, state: EffortState, judgment: Judgment |
   if (target === c) return { level: current, state: { ...state, e, dwell: state.dwell + 1 }, reason: "hold" };
   return { level, state: { ...state, e, dwell: 0 }, reason };
 }
+
+/**
+ * Where the level is heading: "up" or "down" when the running average sits at least half the
+ * margin away from `level` and the bounds leave room to move that way, else undefined.
+ */
+export function trend(level: string, state: EffortState, policy: Policy): "up" | "down" | undefined {
+  const c = levelIndex(level);
+  const ceiling = levelIndex(state.ceiling);
+  const floor = levelIndex(policy.floor);
+  if (state.e === undefined || c < 0 || ceiling < 0) return undefined;
+  const threshold = policy.margin / 2;
+  if (state.e - c >= threshold && c < ceiling) return "up";
+  if (c - state.e >= threshold && c > floor) return "down";
+  return undefined;
+}

@@ -25,7 +25,7 @@ import {
 } from "./limits.ts";
 import { DEFAULT_EFFORT_UPDATES, type EffortUpdatesConfig, emptyState, restoreState, rewritePayload } from "./effort-updates.ts";
 import { DEFAULT_MID_RUN, MID_RUN_QUESTIONS, type MidRunConfig, globMatch, midRunSupported, runState, shouldAssess } from "./midrun.ts";
-import { DEFAULT_POLICY, type EffortState, type Judgment, LEVELS, type Policy, decide } from "./policy.ts";
+import { DEFAULT_POLICY, type EffortState, type Judgment, LEVELS, type Policy, decide, trend } from "./policy.ts";
 import { clip, messageText } from "./transcript.ts";
 import { CodexPoller } from "./usage.ts";
 
@@ -204,7 +204,12 @@ export default function autoEffort(pi: ExtensionAPI, deps: AutoEffortDeps = {}) 
   const status = (ctx: ExtensionContext) => {
     if (!ctx.hasUI) return;
     const limited = limitsOn() && pressure.tier !== "none" ? `, limited: ${pressureLabel(pressure)}` : "";
-    ctx.ui.setStatus(STATUS_KEY, active() ? `effort: ${pi.getThinkingLevel()} (auto${limited})` : undefined);
+    // The trend is measured on the policy's own pick, before any limit cut.
+    const current = pi.getThinkingLevel();
+    const base = baseline !== undefined && appliedLevel !== undefined && current === appliedLevel ? baseline : current;
+    const direction = trend(base, state, config.policy);
+    const arrow = direction === "up" ? " ↑" : direction === "down" ? " ↓" : "";
+    ctx.ui.setStatus(STATUS_KEY, active() ? `effort: ${current}${arrow} (auto${limited})` : undefined);
   };
 
   const manual = (level: string) => {

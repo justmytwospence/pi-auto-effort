@@ -64,7 +64,11 @@ level when Jev is unavailable.
 - `/auto-effort on`, `/auto-effort off`: for this session; off restores the ceiling.
 
 The footer shows `effort: high (auto)`, or `effort: medium (auto, limited: 5h 84%)` while a limit
-is in force (see Limits). Each decision is an `auto-effort:state` session entry (never
+is in force (see Limits). An arrow (`effort: medium ↑ (auto)`) shows where the level is heading:
+the running average sits at least half the margin (0.3) above or below the policy's own level
+(before any limit cut), and the ceiling or floor leaves room to move that way. It usually appears
+one assessment before a change, while the average builds toward the margin or a lower level waits
+out its dwell. Each decision is an `auto-effort:state` session entry (never
 sent to the model; `phase` is `prompt` or `run`); the state follows the session tree and is restored on resume.
 
 ## Limits

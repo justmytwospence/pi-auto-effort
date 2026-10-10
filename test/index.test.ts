@@ -24,6 +24,19 @@ test("effort follows the requests, capped at the manual level", async () => {
   expect(ctx.ui.status.get("auto-effort")).toBe("effort: high (auto)");
 });
 
+test("the footer shows where the level is heading", async () => {
+  const { h, ctx } = setup([1, 2, 3]);
+  await h.emit("session_start", { type: "session_start" }, ctx);
+  await h.emit("thinking_level_select", { type: "thinking_level_select", level: "xhigh", previousLevel: "high" }, ctx);
+  await h.emit("before_agent_start", { prompt: "routine" }, ctx);
+  expect(ctx.ui.status.get("auto-effort")).toBe("effort: medium (auto)");
+  // The average rises to 1.5: not enough to move, enough to point up.
+  await h.emit("before_agent_start", { prompt: "a bit harder" }, ctx);
+  expect(ctx.ui.status.get("auto-effort")).toBe("effort: medium ↑ (auto)");
+  await h.emit("before_agent_start", { prompt: "hard" }, ctx);
+  expect(ctx.ui.status.get("auto-effort")).toBe("effort: xhigh (auto)");
+});
+
 test("a manual change becomes the new ceiling; own changes do not", async () => {
   const { h, ctx } = setup([3, 3]);
   await h.emit("session_start", { type: "session_start" }, ctx);

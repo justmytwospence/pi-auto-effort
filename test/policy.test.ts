@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { applyLimit } from "../src/limits.ts";
-import { DEFAULT_POLICY, type EffortState, LEVELS, decide } from "../src/policy.ts";
+import { DEFAULT_POLICY, type EffortState, LEVELS, decide, trend } from "../src/policy.ts";
 
 const fresh = (ceiling = "xhigh"): EffortState => ({ dwell: DEFAULT_POLICY.minDwell, ceiling });
 const j = (score: number, confidence = 0.9, ack = 0) => ({ score, confidence, ack });
@@ -79,4 +79,15 @@ describe("decide", () => {
     expect(state.dwell).toBe(10);
     expect(applyLimit(baseline, { steps: 0 }, DEFAULT_POLICY.floor, LEVELS).level).toBe("high");
   });
+});
+
+test("trend points where the average is pulling, within the bounds", () => {
+  const s = (e: number | undefined, ceiling = "xhigh") => ({ e, dwell: 0, ceiling });
+  expect(trend("medium", s(1.5), DEFAULT_POLICY)).toBe("up");
+  expect(trend("medium", s(1.2), DEFAULT_POLICY)).toBeUndefined();
+  expect(trend("high", s(1.6), DEFAULT_POLICY)).toBe("down");
+  expect(trend("high", s(2.9, "high"), DEFAULT_POLICY)).toBeUndefined();
+  expect(trend("low", s(0, "high"), DEFAULT_POLICY)).toBeUndefined();
+  expect(trend("medium", s(undefined), DEFAULT_POLICY)).toBeUndefined();
+  expect(trend("minimal", s(3), DEFAULT_POLICY)).toBeUndefined();
 });
